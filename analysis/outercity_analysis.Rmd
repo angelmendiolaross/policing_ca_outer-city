@@ -1,0 +1,267 @@
+---
+title: "Final Analysis for Social Problems Paper"
+author: "Angel Mendiola Ross"
+date: '2023-08-31'
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_knit$set(root.dir = '/Users/angelmr/soc_prob_2023/')
+```
+
+## Setup
+
+```{r, include=FALSE}
+
+### Clear global environment
+rm(list=ls())
+
+library(pacman)
+pacman::p_unload(all)
+
+pacman::p_load(
+  tidyverse, #dplyr, readr, etc.
+  magrittr, #%<>% operator
+  ggthemes, #for pretty charts
+  plm, #panel data
+  ggplot2, #plotting
+  gplots, #plotting heterogeneity over time
+  ggeffects, #plotting predicted values curves
+  lmtest, #coeftest
+  sandwich #clustered standard errors
+)
+```
+
+The purpose of this script is to run the final models and tables for my manuscript, "Policing the California Outercity: Drivers of Police Spending in a Changing Metropolis" to be published in Social Problems in 2023.
+
+## 1.0 Generating Samples
+
+First, I will read in the final balanced panel dataset and generate the different samples I plan to analyze.
+
+```{r, include=FALSE}
+
+# loading balanced panel dataset
+load("data/dt_pan_bal_lead.RData")
+
+`%notin%` <- Negate(`%in%`)
+
+# exurban sample
+dt_clean_full_outer <- dt_pan_bal_lead %>%
+  subset(combined==2)
+
+# urban core sample
+dt_clean_full_core <- dt_pan_bal_lead %>%
+  subset(combined==1)
+```
+
+## 2.0 Table 1: Descriptive Statistics
+
+The first table includes descriptive statistics for the two samples.
+
+```{r, include=F}
+# developing a summary stats table
+library(pastecs)
+options(scipen=100)
+options(digits=2)
+
+# urban core - getting relevant variables
+stats_core <- stat.desc(dt_clean_full_core[c(22,7:14,23,24:26,33,36,37,40)])
+# converting to matrix to transpose
+stats_core <- as.data.frame(t(as.matrix(stats_core)))
+stats_core <- stats_core[c(9,13,4,5)]
+
+# suburban periphery - getting relevant variables
+stats_outer <- stat.desc(dt_clean_full_outer[c(22,7:14,23,24:26,33,36,37,40)])
+# converting to matrix to transpose
+stats_outer <- as.data.frame(t(as.matrix(stats_outer)))
+stats_outer <- stats_outer[c(9,13,4,5)]
+
+outer <- dt_clean_full_outer %>%
+  mutate(type="exurb")
+core <- dt_clean_full_core %>%
+  mutate(type="urban core")
+# combine them
+combined <- rbind(outer,core)
+
+# getting rid of character vars
+names(combined)
+combined <- combined[c(22,7:14,23,24:26,33,36,37,40,49)]
+
+# running multiple t tests
+library(rstatix)
+library(ggpubr)
+# Transform the data into long format
+# Put all variables in the same column except `type`, the grouping variable
+mydata.long <- combined %>%
+  pivot_longer(-type, names_to = "variables", values_to = "value")
+mydata.long %>% sample_n(6)
+stat.test <- mydata.long %>%
+  group_by(variables) %>%
+  t_test(value ~ type) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+stat.test
+```
+
+I also cite a few numbers, like the mean police spending per 1,000 residents for the whole sample, in text. Those numbers are here:
+
+```{r}
+mean(dt_pan_bal_lead$police_per_1000)
+
+# min
+dt_pan_bal_lead %>%
+  arrange(desc(police_per_1000)) %>%
+  select(city_name.x,year,city_type,police_per_1000)
+# max
+dt_pan_bal_lead %>%
+  arrange(police_per_1000) %>%
+  select(city_name.x,year,city_type,police_per_1000)
+
+# ranges within cities
+dt_pan_bal_lead %>%
+  subset(city_name.x=="Chula Vista") %>%
+  arrange(desc(police_per_1000)) %>%
+  select(city_name.x,year,police_per_1000)
+dt_pan_bal_lead %>%
+  subset(city_name.x=="Delano") %>%
+  arrange(desc(police_per_1000)) %>%
+  select(city_name.x,year,city_type,police_per_1000)
+```
+
+## 3.0 Table 2: Regression Results
+
+The first set of models does not control for total revenues so it includes all years of data available (2000-2018). It also includes a combined measure testing the significance of the difference in coefficients between the two samples.
+
+```{r}
+# urban core sample
+fe_core <- plm((lead(log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(total_pop_interp) + log1p(pop_density_interp) + log1p(mean_ZHVI_infl_adj.y) + pvoteRepub.y, data=subset(dt_clean_full_core), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(fe_core)
+# robust standard errors
+coeftest(fe_core, vcov=vcovHC(fe_core, type = "HC1"))
+
+# exurban sample
+fe_exurb <- plm((lead(log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(total_pop_interp) + log1p(pop_density_interp) + pvoteRepub.y + log1p(mean_ZHVI_infl_adj.y), data=subset(dt_clean_full_outer), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(fe_exurb)
+# robust standard errors
+coeftest(fe_exurb, vcov=vcovHC(fe_exurb, type = "HC1"))
+
+# finding the maximum of the renter threat curve for exurbs: 45%
+-2.9172/(2*-3.2077)
+
+# getting statistically significant differences between outer and core
+dt_clean_full_outer %<>%
+  mutate(outer=1)
+dt_clean_full_core %<>%
+  mutate(outer=0)
+
+comb_red <- rbind(dt_clean_full_outer,dt_clean_full_core)
+
+# running first regression
+comb_five <- plm(lead((log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(total_pop_interp) + log1p(pop_density_interp) + log1p(mean_ZHVI_infl_adj.y) + pvoteRepub.y + pnhb_interp*outer + I(pnhb_interp^2)*outer + phis_interp*outer + I(phis_interp^2)*outer + pimmig_interp*outer + I(pimmig_interp^2)*outer + ppov100_interp*outer + prenter_interp*outer + I(prenter_interp^2)*outer + (pnhb_interp*prenter_interp)*outer + (I(pnhb_interp^2)*I(prenter_interp^2))*outer + diss_index_city_rent_interp*outer + diss_index_nhb_nhw_interp*outer + diss_index_his_nhw_interp*outer + log1p(violent_crime_rate)*outer + log1p(total_pop_interp)*outer + log1p(pop_density_interp)*outer + pvoteRepub.y*outer + log1p(mean_ZHVI_infl_adj.y)*outer, data=subset(comb_red), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(comb_five)
+coeftest(comb_five, vcov=vcovHC(comb_five, type = "HC1"))
+
+```
+
+ ## 4.0 Figure 2: Interaction Between Renter and Racial Threat in California Suburbs
+
+Based on the recommendation of a review, I add a visualization of the interaction between the share of renters and the share of Black residents to the paper (drawing on the model shown in Table 2).
+
+```{r, include=F}
+library(sjPlot)
+library(interactions)
+
+# in lm
+fe_exurb <- lm(log1p(police_lead) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(total_pop_interp) + log1p(pop_density_interp) + log1p(mean_ZHVI_infl_adj.y) + factor(stplace10)-1 + factor(year)-1, data = dt_clean_full_outer)
+
+# WITHOUT REVENUES
+options(scipen=100)
+interact_plot(fe_exurb, pred = prenter_interp, modx = pnhb_interp, plot.points = FALSE,
+              modx.values = c(0, 0.05, .14),
+              x.label = "Proportion of Renter Households", 
+              y.label = "Police Spending per 1,000 Residents (logged)", 
+              legend.main = c("Proportion of Black \nResidents")) + 
+  scale_y_continuous(
+  labels = scales::number_format(accuracy = 0.1))
+
+ggsave(filename = "figures/interaction.png", dpi = 1000)
+```
+
+## 5.0 Table 3: Regression Results (Robustness Checks)
+
+The second set of models does not two things as robustness checks: (1) it adds total revenues so the sample is now restricted to 2003-2018, and (2) it removes inland "central cities" from the suburban sample to ensure that these "central cities" are not driving the suburban results.
+
+```{r}
+# urban core sample - adding revenue (column 1)
+fe_core <- plm((lead(log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(pop_density_interp) + log1p(mean_ZHVI_infl_adj.y) + pvoteRepub.y + log1p(total_rev_infl_adj), data=subset(dt_clean_full_core), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(fe_core)
+# robust standard errors
+coeftest(fe_core, vcov=vcovHC(fe_core, type = "HC1"))
+
+# suburbs with total revenue (column 2)
+fe_exurb <- plm((lead(log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(pop_density_interp) + log1p(mean_ZHVI_infl_adj.y) + pvoteRepub.y + log1p(total_rev_infl_adj), data=subset(dt_clean_full_outer), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(fe_exurb)
+# robust standard errors
+coeftest(fe_exurb, vcov=vcovHC(fe_exurb, type = "HC1"))
+
+# suburbs with total revenue AND taking out inland central cities (column 3)
+fe_exurb <- plm((lead(log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(pop_density_interp) + log1p(mean_ZHVI_infl_adj.y) + pvoteRepub.y + log1p(total_rev_infl_adj), data=subset(dt_clean_full_outer, census_con_city==0), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(fe_exurb)
+# robust standard errors
+coeftest(fe_exurb, vcov=vcovHC(fe_exurb, type = "HC1"))
+
+# finding the maximum of the renter threat curve for suburbs: 36%
+-2.769/(2*-3.809)
+
+```
+
+## Other Robustness Checks
+
+I also mention running models that included federal transfers, in addition to total revenues, because of work by Hinton (2016) and Vargas and McHarris (2017). Those models are below.
+
+```{r}
+# urban core sample - adding revenue (column 1)
+fe_core <- plm((lead(log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(pop_density_interp) + log1p(mean_ZHVI_infl_adj.y) + pvoteRepub.y + log1p(total_rev_infl_adj) + log1p(fed_transfers_infl_adj), data=subset(dt_clean_full_core), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(fe_core)
+# robust standard errors
+coeftest(fe_core, vcov=vcovHC(fe_core, type = "HC1"))
+
+# suburbs with total revenue (column 2)
+fe_exurb <- plm((lead(log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(pop_density_interp) + log1p(mean_ZHVI_infl_adj.y) + pvoteRepub.y + log1p(total_rev_infl_adj) + log1p(fed_transfers_infl_adj), data=subset(dt_clean_full_outer), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(fe_exurb)
+# robust standard errors
+coeftest(fe_exurb, vcov=vcovHC(fe_exurb, type = "HC1"))
+
+# suburbs with total revenue AND taking out inland central cities (column 3)
+fe_exurb <- plm((lead(log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(pop_density_interp) + log1p(mean_ZHVI_infl_adj.y) + pvoteRepub.y + log1p(total_rev_infl_adj) + log1p(fed_transfers_infl_adj), data=subset(dt_clean_full_outer, census_con_city==0), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(fe_exurb)
+# robust standard errors
+coeftest(fe_exurb, vcov=vcovHC(fe_exurb, type = "HC1"))
+
+# finding the maximum of the renter threat curve for suburbs: 36%
+-2.634/(2*-3.614)
+```
+
+One reviewer also asked me to run my models using the "census-convenient" definition of suburbs. The results of that analysis are shown below, including the models run only on "central cities."
+
+```{r}
+# central cities and census-convenient suburb samples
+dt_clean_cities <- dt_pan_bal_lead %>%
+  subset(census_con_city==1)
+dt_clean_suburbs <- dt_pan_bal_lead %>%
+  subset(census_con_city==0)
+
+# RUNNING ROBUSTNESS TEST FROM REVIEWER 1 ON CENSUS-CONVENIENT DEFINITION
+fe_exurb <- plm((lead(log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(pop_density_interp) + pvoteRepub.y + log1p(mean_ZHVI_infl_adj.y) + log1p(total_rev_infl_adj), data=subset(dt_clean_suburbs), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(fe_exurb)
+# robust standard errors
+coeftest(fe_exurb, vcov=vcovHC(fe_exurb, type = "HC1"))
+
+# CENTRAL CITIES ONLY
+fe_core <- plm((lead(log1p(police_per_1000))) ~ pnhb_interp + I(pnhb_interp^2) + phis_interp + I(phis_interp^2) + pimmig_interp + I(pimmig_interp^2) + ppov100_interp + prenter_interp + I(prenter_interp^2) + pnhb_interp*prenter_interp + I(pnhb_interp^2)*I(prenter_interp^2) + diss_index_city_rent_interp + diss_index_nhb_nhw_interp + diss_index_his_nhw_interp + log1p(violent_crime_rate) + log1p(pop_density_interp) + pvoteRepub.y + log1p(mean_ZHVI_infl_adj.y) + log1p(total_rev_infl_adj), data=subset(dt_clean_cities), index = c("stplace10","year"), model = "within", effect = "twoway")
+summary(fe_core)
+# robust standard errors
+coeftest(fe_core, vcov=vcovHC(fe_core, type = "HC1"))
+```
